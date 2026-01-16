@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Clash Ultime Pro 3D Tout-en-un + Sorts</title>
+<style>
+body {margin:0; overflow:hidden; font-family:sans-serif;}
+#ui {position:absolute; top:10px; left:10px; background:rgba(0,0,0,0.7); color:white; padding:10px; border-radius:5px; z-index:10;}
+button {margin:2px; padding:5px;}
+#resources {position:absolute; top:10px; right:10px; background:rgba(0,0,0,0.7); color:white; padding:10px; border-radius:5px;}
+#modeText {margin-top:5px; font-weight:bold;}
+#volumeControl {position:absolute; bottom:10px; left:10px; background:rgba(0,0,0,0.7); color:white; padding:10px; border-radius:5px;}
+#spellInfo {position:absolute; bottom:10px; right:10px; background:rgba(0,0,0,0.7); color:white; padding:10px; border-radius:5px;}
+</style>
+</head>
+<body>
+
+<div id="ui">
+<button onclick="switchMode()">Passer Mode</button>
+<button onclick="spawnTroop('warrior')">Guerrier</button>
+<button onclick="spawnTroop('archer')">Archère</button>
+<button onclick="spawnTroop('giant')">Géant</button>
+<button onclick="spawnTroop('barbarian')">Barbare</button>
+<button onclick="spawnTroop('wizard')">Sorcier</button>
+<button onclick="spawnTroop('dragon')">Dragon</button>
+<button onclick="spawnTroop('balloon')">Ballon</button>
+<p id="modeText">Mode: Builder</p>
+</div>
+
+<div id="resources">Or: 0 | Élixir: 0</div>
+<div id="spellInfo">Cliquez pour lancer un sort : Boule de Feu, Foudre, Gel, Rage, Soin</div>
+
+<div id="volumeControl">
+Volume Musique: <input type="range" id="musicVol" min="0" max="1" step="0.01" value="0.5">
+Volume SFX: <input type="range" id="sfxVol" min="0" max="1" step="0.01" value="0.7">
+</div>
+
+<audio id="bgMusic" loop>
+  <source src="https://cdn.pixabay.com/download/audio/2023/10/07/audio_72dbe73d08.mp3?filename=relaxed-battle-ambience-19647.mp3" type="audio/mpeg">
+</audio>
+<audio id="sndAttack"><source src="https://cdn.pixabay.com/download/audio/2022/03/14/audio_ba582e4f95.mp3?filename=sword-attack-12379.mp3" type="audio/mpeg"></audio>
+<audio id="sndExplosion"><source src="https://cdn.pixabay.com/download/audio/2021/08/04/audio_7842aeea50.mp3?filename=explosion-04-39789.mp3" type="audio/mpeg"></audio>
+<audio id="sndPlace"><source src="https://cdn.pixabay.com/download/audio/2022/02/22/audio_8bb6332db6.mp3?filename=button-click-110913.mp3" type="audio/mpeg"></audio>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.155.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.155.0/examples/js/controls/OrbitControls.js"></script>
+
+<script>
+// -------------------- Audio --------------------
+const bgMusic = document.getElementById("bgMusic");
+const sndAttack = document.getElementById("sndAttack");
+const sndExplosion = document.getElementById("sndExplosion");
+const sndPlace = document.getElementById("sndPlace");
+const musicVolControl = document.getElementById("musicVol");
+const sfxVolControl = document.getElementById("sfxVol");
+bgMusic.volume = musicVolControl.value;
+[sndAttack,sndExplosion,sndPlace].forEach(s=>s.volume=sfxVolControl.value);
+bgMusic.play();
+musicVolControl.addEventListener("input",()=>bgMusic.volume=musicVolControl.value);
+sfxVolControl.addEventListener("input",()=>[sndAttack,sndExplosion,sndPlace].forEach(s=>s.volume=sfxVolControl.value));
+
+// -------------------- THREE.js Scene --------------------
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x87ceeb);
+const camera=new THREE.PerspectiveCamera(60,window.innerWidth/window.innerHeight,0.1,1000);
+camera.position.set(50,60,50);
+camera.lookAt(0,0,0);
+
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth,window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const controls=new THREE.OrbitControls(camera,renderer.domElement);
+controls.enablePan=false; controls.enableRotate=false; controls.enableZoom=false;
+
+scene.add(new THREE.DirectionalLight(0xffffff,1).position.set(50,50,50));
+scene.add(new THREE.AmbientLight(0x404040));
+
+// -------------------- Ground --------------------
+const loader=new THREE.TextureLoader();
+const groundTex=loader.load('https://i.imgur.com/vXoFNhC.jpg');
+groundTex.wrapS=groundTex.wrapT=THREE.RepeatWrapping;
+groundTex.repeat.set(12,12);
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(100,100),new THREE.MeshStandardMaterial({map:groundTex}));
+ground.rotation.x=-Math.PI/2; scene.add(ground);
+
+// -------------------- Mode --------------------
+let mode="builder";
+function switchMode(){ 
+    mode = mode==="builder"?"attack":"builder"; 
+    document.getElementById("modeText").innerText="Mode: "+(mode==="builder"?"Builder":"Attack");
+    sndPlace.play();
+}
+
+// -------------------- Buildings --------------------
+const buildings=[];
+function createBuilding(name,x,z,hp,color,textureURL="",resource="none"){
+    let mat=textureURL?new THREE.MeshStandardMaterial({map:loader.load(textureURL)}):new THREE.MeshStandardMaterial({color:color});
+    const mesh=new THREE.Mesh(new THREE.BoxGeometry(4,4,4),mat);
+    mesh.position.set(x,2,z);
+    mesh.userData={name:name,hp:hp,maxHp:hp,resource:resource,fireCooldown:0};
+    const hpBar=new THREE.Mesh(new THREE.PlaneGeometry(3,0.3),new THREE.MeshBasicMaterial({color:0xff0000}));
+    hpBar.position.set(0,3,0); mesh.add(hpBar); mesh.userData.hpBar=hpBar;
+    scene.add(mesh); buildings.push(mesh);
+}
+
+// -------------------- Exemple Bâtiments --------------------
+createBuilding("HDV",0,0,200,0xffffff,'https://i.imgur.com/8Kf7Y6g.jpg');
+createBuilding("Casern",-15,5,100,0xff6347,'https://i.imgur.com/BxMOnmD.jpg');
+createBuilding("Tour Défense",15,-5,120,0x1e90ff,'https://i.imgur.com/yqjOaW9.jpg');
+createBuilding("Mortier",10,10,80,0xaaaaaa,'https://i.imgur.com/Od3LJr9.jpg');
+createBuilding("Mine Or",20,0,50,0xffff00,'https://i.imgur.com/qgXy2jv.jpg',"gold");
+createBuilding("Mine Élixir",-20,0,50,0xff00ff,'https://i.imgur.com/4Tqh8Rl.jpg',"elixir");
+createBuilding("Canon",-10,-10,80,0x333333,'https://i.imgur.com/BKxRj6u.jpg');
+
+// -------------------- Troops --------------------
+const materialMap={
+warrior:new THREE.MeshStandardMaterial({map:loader.load('https://i.imgur.com/TroopWarrior.png')}),
+archer:new THREE.MeshStandardMaterial({map:loader.load('https://i.imgur.com/TroopArcher.png')}),
+giant:new THREE.MeshStandardMaterial({map:loader.load('https://i.imgur.com/TroopGiant.png')}),
+barbarian:new THREE.MeshStandardMaterial({map:loader.load('https://i.imgur.com/TroopBarbarian.png')}),
+wizard:new THREE.MeshStandardMaterial({map:loader.load('https://i.imgur.com/TroopWizard.png')}),
+dragon:new THREE.MeshStandardMaterial({map:loader.load('https://i.imgur.com/TroopDragon.png')}),
+balloon:new THREE.MeshStandardMaterial({map:loader.load('https://i.imgur.com/TroopBalloon.png')})
+};
+
+const troops=[]; const projectiles=[]; let gold=0; let elixir=0;
+function spawnTroop(type){
+    if(mode!=="attack") return;
+    const geo=new THREE.CapsuleGeometry(0.3,0.7,4,8);
+    const mesh=new THREE.Mesh(geo,materialMap[type]);
+    mesh.position.set(-25,0.5,-25);
+    mesh.userData={type:type,target:null,speed:0.07,attackCooldown:0,hp:1};
+    scene.add(mesh); troops.push(mesh);
+}
+
+// -------------------- Sorts --------------------
+// Exemple simple : Boule de Feu, Foudre, Gel, Rage, Soin
+const spells=[];
+document.addEventListener('click', (event)=>{
+    if(mode!=="attack") return;
+    // Calcul de la position clic sur le sol
+    const mouse = new THREE.Vector2();
+    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObject(ground);
+    if(intersects.length>0){
+        const pos = intersects[0].point;
+        launchSpell("fireball",pos);
+    }
+});
+
+function launchSpell(type,pos){
+    const geo = new THREE.SphereGeometry(1,16,16);
+    const colorMap = {fireball:0xff4500,foudre:0xffff00,gel:0x00ffff,rage:0xff00ff,heal:0x00ff00};
+    const mat = new THREE.MeshStandardMaterial({color:colorMap[type], transparent:true, opacity:0.7});
+    const spellMesh = new THREE.Mesh(geo,mat);
+    spellMesh.position.copy(pos); scene.add(spellMesh);
+    spells.push({mesh:spellMesh,type:type,ttl:60});
+}
+
+// -------------------- Animation Loop --------------------
+function animate(){
+    requestAnimationFrame(animate);
+    // Update spells
+    for(let i=spells.length-1;i>=0;i--){
+        spells[i].ttl--;
+        if(spells[i].ttl<=0){ scene.remove(spells[i].mesh); spells.splice(i,1);}
+    }
+    renderer.render(scene,camera);
+}
+animate();
+</script>
+</body>
+</html>
