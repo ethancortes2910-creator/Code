@@ -1,190 +1,170 @@
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
-<title>Clash-like 3D Final</title>
-<style>
-body{margin:0;overflow:hidden;background:#000;font-family:Arial}
-#hud{
-position:absolute;top:10px;left:10px;
-background:rgba(0,0,0,.7);
-padding:10px;border-radius:10px;color:white
-}
-button{padding:8px;margin:4px;border:none;border-radius:6px}
-#end{display:none;position:absolute;inset:0;
-background:rgba(0,0,0,.8);color:white;
-align-items:center;justify-content:center;font-size:32px}
-</style>
-</head>
-<body>
+import pygame
+import sys
+import random
+import os
 
-<div id="hud">
-<button onclick="mode='build'">Builder</button>
-<button onclick="mode='attack'">Attack</button><br>
-<button onclick="spawnTroop('light')">Troupe</button>
-<button onclick="spawnTroop('heavy')">Géant</button>
-<button onclick="spell()">Sort</button>
-</div>
+pygame.init()
 
-<div id="end"></div>
+# ----------- Configurations ----------- #
+WIDTH, HEIGHT = 288, 512
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+clock = pygame.time.Clock()
+pygame.display.set_caption("Flappy Bird Ultimate Mobile Clone")
 
-<script src="https://cdn.jsdelivr.net/npm/three@0.155/build/three.min.js"></script>
-<script>
-let mode="build";
-const scene=new THREE.Scene();
-scene.background=new THREE.Color(0x87ceeb);
+# ----------- Constantes ----------- #
+GRAVITY = 0.25
+BIRD_JUMP = -6
+PIPE_SPEED = 2
+PIPE_GAP = 100
+BASE_SCROLL_SPEED = 2
 
-const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,0.1,1000);
-camera.position.set(18,22,18);
-camera.lookAt(0,0,0);
+# ----------- Assets ----------- #
+ASSETS = "assets"
+BG = pygame.image.load(os.path.join(ASSETS, "background.png"))
+BASE = pygame.image.load(os.path.join(ASSETS, "base.png"))
+BIRD_FRAMES = [
+    pygame.image.load(os.path.join(ASSETS, "bird1.png")),
+    pygame.image.load(os.path.join(ASSETS, "bird2.png")),
+    pygame.image.load(os.path.join(ASSETS, "bird3.png")),
+]
+PIPE_IMG = pygame.image.load(os.path.join(ASSETS, "pipe.png"))
+jump_sound = pygame.mixer.Sound(os.path.join(ASSETS, "jump.wav"))
+point_sound = pygame.mixer.Sound(os.path.join(ASSETS, "point.wav"))
+hit_sound = pygame.mixer.Sound(os.path.join(ASSETS, "hit.wav"))
 
-const renderer=new THREE.WebGLRenderer({antialias:true});
-renderer.setSize(innerWidth,innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
-document.body.appendChild(renderer.domElement);
+# ----------- Variables ----------- #
+bird_index = 0
+bird_x = 50
+bird_y = HEIGHT//2
+bird_movement = 0
+pipe_list = []
+score = 0
+displayed_score = 0
+best_score = 0
+game_active = False
+base_x = 0
+game_over_animation = False
 
-/* Lights */
-scene.add(new THREE.AmbientLight(0xffffff,.6));
-const sun=new THREE.DirectionalLight(0xffffff,1);
-sun.position.set(20,30,10);
-scene.add(sun);
+# ----------- Événements ----------- #
+BIRD_ANIM_EVENT = pygame.USEREVENT + 1
+pygame.time.set_timer(BIRD_ANIM_EVENT, 200)
+SPAWNPIPE = pygame.USEREVENT + 2
+pygame.time.set_timer(SPAWNPIPE, 1200)
 
-/* Ground */
-const ground=new THREE.Mesh(
-new THREE.PlaneGeometry(50,50),
-new THREE.MeshStandardMaterial({color:0x4caf50})
-);
-ground.rotation.x=-Math.PI/2;
-scene.add(ground);
+# ----------- Fonctions ----------- #
+def draw_pipes(pipes):
+    for pipe in pipes:
+        if pipe.bottom >= HEIGHT:
+            screen.blit(PIPE_IMG, pipe)
+        else:
+            flip_pipe = pygame.transform.flip(PIPE_IMG, False, True)
+            screen.blit(flip_pipe, pipe)
 
-/* Arrays */
-const buildings=[],troops=[],shots=[];
+def move_pipes(pipes):
+    for pipe in pipes:
+        pipe.centerx -= PIPE_SPEED
+    return [pipe for pipe in pipes if pipe.right > -50]
 
-/* Building */
-function addBuilding(x,z,type="canon"){
-const b=new THREE.Mesh(
-new THREE.BoxGeometry(3,3,3),
-new THREE.MeshStandardMaterial({color:type=="canon"?0x555555:0x8b4513})
-);
-b.position.set(x,1.5,z);
-b.userData={hp:120,cd:0,type};
-scene.add(b);
-buildings.push(b);
-}
+def check_collision(pipes):
+    global game_active, game_over_animation, best_score
+    bird_rect = BIRD_FRAMES[0].get_rect(center=(bird_x, bird_y))
+    for pipe in pipes:
+        if bird_rect.colliderect(pipe):
+            hit_sound.play()
+            game_active = False
+            game_over_animation = True
+    if bird_y >= 450 or bird_y <= 0:
+        hit_sound.play()
+        game_active = False
+        game_over_animation = True
 
-/* Touch build */
-window.addEventListener("touchstart",()=>{
-if(mode!=="build")return;
-addBuilding((Math.random()*20)-10,(Math.random()*20)-10,"canon");
-});
+def rotate_bird(bird):
+    return pygame.transform.rotozoom(bird, -bird_movement*3, 1)
 
-/* Troops */
-function spawnTroop(type){
-if(mode!=="attack")return;
-const t=new THREE.Mesh(
-new THREE.CapsuleGeometry(.4,type=="heavy"?1.4:1,4,8),
-new THREE.MeshStandardMaterial({color:type=="heavy"?0xaa0000:0xff4444})
-);
-t.position.set(-20,1,-20);
-t.userData={
-hp:type=="heavy"?80:40,
-speed:type=="heavy"?.03:.06,
-damage:type=="heavy"?1:.6,
-target:null
-};
-scene.add(t);
-troops.push(t);
-}
+def show_menu():
+    font = pygame.font.SysFont(None, 30)
+    start_text = font.render("Press SPACE to Start", True, (255,255,255))
+    screen.blit(start_text, (WIDTH//2 - start_text.get_width()//2, HEIGHT//2))
 
-/* Spell */
-function spell(){
-const s=new THREE.Mesh(
-new THREE.SphereGeometry(1.2,16,16),
-new THREE.MeshStandardMaterial({color:0xff6600,transparent:true,opacity:.8})
-);
-s.position.set(0,1,0);
-scene.add(s);
-troops.forEach(t=>{
-if(t.position.distanceTo(s.position)<5)t.userData.hp-=15;
-});
-let life=30;
-(function fx(){
-life--;s.scale.multiplyScalar(1.05);
-if(life>0)requestAnimationFrame(fx);
-else scene.remove(s);
-})();
-}
+def score_display(current_score, best=False):
+    font = pygame.font.SysFont(None, 40)
+    text = f"Best: {current_score}" if best else str(int(current_score))
+    score_surface = font.render(text, True, (255,255,255))
+    y_pos = 450 if best else 50
+    screen.blit(score_surface, (WIDTH//2 - score_surface.get_width()//2, y_pos))
 
-/* Game Loop */
-function animate(){
-requestAnimationFrame(animate);
+# ----------- Boucle principale ----------- #
+while True:
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            pygame.quit()
+            sys.exit()
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_SPACE:
+                if game_active:
+                    bird_movement = BIRD_JUMP
+                    jump_sound.play()
+                else:
+                    # Start / restart
+                    game_active = True
+                    pipe_list.clear()
+                    bird_y = HEIGHT//2
+                    bird_movement = 0
+                    score = 0
+                    displayed_score = 0
+                    game_over_animation = False
+        if event.type == BIRD_ANIM_EVENT:
+            bird_index = (bird_index + 1) % len(BIRD_FRAMES)
+        if event.type == SPAWNPIPE and game_active:
+            pipe_height = random.randint(150, 300)
+            bottom_pipe = PIPE_IMG.get_rect(midtop=(WIDTH + 50, pipe_height))
+            top_pipe = PIPE_IMG.get_rect(midbottom=(WIDTH + 50, pipe_height - PIPE_GAP))
+            pipe_list.extend([bottom_pipe, top_pipe])
 
-/* Defense AI */
-buildings.forEach(b=>{
-b.userData.cd--;
-if(b.userData.cd<=0 && troops.length){
-const t=troops[0];
-const p=new THREE.Mesh(
-new THREE.SphereGeometry(.2),
-new THREE.MeshBasicMaterial({color:0x000})
-);
-p.position.copy(b.position);
-p.userData={target:t};
-scene.add(p);
-shots.push(p);
-b.userData.cd=50;
-}
-});
+    screen.blit(BG, (0,0))
 
-/* Shots */
-shots.forEach((s,i)=>{
-const t=s.userData.target;
-if(!t)return;
-s.position.lerp(t.position,.1);
-if(s.position.distanceTo(t.position)<.5){
-t.userData.hp-=5;
-scene.remove(s);shots.splice(i,1);
-}
-});
+    if game_active:
+        # Bird movement & rotation
+        bird_movement += GRAVITY
+        bird_y += bird_movement
+        rotated_bird = rotate_bird(BIRD_FRAMES[bird_index])
+        bird_rect = rotated_bird.get_rect(center=(bird_x, bird_y))
+        screen.blit(rotated_bird, bird_rect)
 
-/* Troop AI */
-troops.forEach((t,i)=>{
-if(!t.userData.target && buildings.length)
-t.userData.target=buildings[0];
-const b=t.userData.target;
-if(b){
-t.position.lerp(b.position,t.userData.speed);
-if(t.position.distanceTo(b.position)<2){
-b.userData.hp-=t.userData.damage;
-if(b.userData.hp<=0){
-scene.remove(b);
-buildings.splice(buildings.indexOf(b),1);
-t.userData.target=null;
-}
-}
-}
-if(t.userData.hp<=0){
-scene.remove(t);troops.splice(i,1);
-}
-});
+        # Pipes
+        pipe_list = move_pipes(pipe_list)
+        draw_pipes(pipe_list)
+        check_collision(pipe_list)
 
-/* Victory */
-if(!buildings.length && mode==="attack"){
-document.getElementById("end").style.display="flex";
-document.getElementById("end").innerText="VICTOIRE";
-}
+        # Score animation
+        for pipe in pipe_list:
+            if pipe.centerx == bird_x:
+                score += 0.5
+                point_sound.play()
+        if displayed_score < score:
+            displayed_score += 0.05
+        score_display(displayed_score)
+    else:
+        # Game over bird animation
+        if game_over_animation and bird_y < 450:
+            bird_movement += GRAVITY
+            bird_y += bird_movement
+            rotated_bird = rotate_bird(BIRD_FRAMES[bird_index])
+            bird_rect = rotated_bird.get_rect(center=(bird_x, bird_y))
+            screen.blit(rotated_bird, bird_rect)
+        else:
+            game_over_animation = False
+            if score > best_score:
+                best_score = int(score)
+            show_menu()
+            score_display(best_score, best=True)
 
-renderer.render(scene,camera);
-}
-animate();
+    # Base scrolling
+    base_x -= BASE_SCROLL_SPEED
+    if base_x <= -WIDTH:
+        base_x = 0
+    screen.blit(BASE, (base_x, HEIGHT-100))
+    screen.blit(BASE, (base_x + WIDTH, HEIGHT-100))
 
-/* Resize */
-window.addEventListener("resize",()=>{
-camera.aspect=innerWidth/innerHeight;
-camera.updateProjectionMatrix();
-renderer.setSize(innerWidth,innerHeight);
-});
-</script>
-</body>
-</html> 
+    pygame.display.update()
+    clock.tick(120)
